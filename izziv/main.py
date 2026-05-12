@@ -4,7 +4,10 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-DATA_DIR = Path("/data")  # mountan z -v
+#docker build -t hand-tracking .
+#docker run -v /media/FastDataMama/data_rv_26:/data hand-tracking
+
+DATA_DIR = Path("/data/Data")  # mountan z -v
 
 # MediaPipe setup
 mp_hands = mp.solutions.hands
@@ -72,35 +75,23 @@ def process_video(video_path: Path) -> pd.DataFrame:
 
 
 def main():
-    patient_dirs = sorted(DATA_DIR.glob("patient_*"))
+    # Določi kateri video želiš obdelati
+    video_path = Path("/data/Data/patient_001/patient_001camP_0_20241121_10_21_17.mp4")
 
-    if not patient_dirs:
-        print(f"Ni najdenih map v {DATA_DIR}")
+    print(f"Obdelava: {video_path.name} ...")
+    df = process_video(video_path)
+
+    if df.empty:
+        print("Ni zaznane roke.")
         return
 
-    for patient_dir in patient_dirs:
-        videos = sorted(patient_dir.glob("*.mp4"))
-        print(f"\n=== {patient_dir.name} ({len(videos)} videov) ===")
+    print(df[["frame", "time_s", "WRIST_speed_px_s"]].head(20))
 
-        for video_path in videos:
-            print(f"  Obdelava: {video_path.name} ...", end=" ", flush=True)
-
-            df = process_video(video_path)
-
-            if df.empty:
-                print("ni zaznane roke, preskočeno.")
-                continue
-
-            # Povprečna hitrost zapestja (WRIST) kot summary
-            wrist_speed = df["WRIST_speed_px_s"].dropna()
-            print(f"{len(df)} frameov | "
-                  f"WRIST avg: {wrist_speed.mean():.1f} px/s | "
-                  f"max: {wrist_speed.max():.1f} px/s")
-
-            # Shrani CSV zraven videa
-            out_path = video_path.with_suffix(".csv")
-            df.to_csv(out_path, index=False)
-            print(f"    → {out_path}")
+    # Shrani v /output znotraj containerja
+    out_path = Path("/output") / video_path.stem
+    out_path.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_path / "results.csv", index=False)
+    print(f"\nShranjen: {out_path}/results.csv")
 
 
 if __name__ == "__main__":
