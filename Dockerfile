@@ -9,7 +9,7 @@ RUN pip install mediapipe==0.10.9
 RUN pip install pandas
 RUN pip install protobuf==3.20.3
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update --fix-missing && apt-get install -y \
     libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
