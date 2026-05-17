@@ -33,6 +33,7 @@ def process_video(video_path: Path, output_dir: Path, K=None, dist_coeffs=None) 
     records = []
     prev_landmarks = None
     frame_idx = 0
+    prev_speed = {} 
 
     with mp_hands.Hands(
         static_image_mode=False,
@@ -75,9 +76,15 @@ def process_video(video_path: Path, output_dir: Path, K=None, dist_coeffs=None) 
                     if prev_landmarks and name in prev_landmarks:
                         prev_x, prev_y = prev_landmarks[name]
                         pixel_dist = np.sqrt((x - prev_x) ** 2 + (y - prev_y) ** 2)
-                        row[f"{name}_speed_px_s"] = pixel_dist * fps
-                    else:
-                        row[f"{name}_speed_px_s"] = np.nan
+                        speed_px = pixel_dist * fps
+                        row[f"{name}_speed_px_s"] = speed_px
+
+                        if K is not None:
+                            row[f"{name}_speed_mm_s"] = px_to_mm(speed_px, K)
+                        else:
+                            row[f"{name}_speed_px_s"] = np.nan
+                            if K is not None:
+                                row[f"{name}_speed_mm_s"] = np.nan
 
                 wrist_speed_px = row.get("WRIST_speed_px_s", 0) or 0
 
@@ -89,7 +96,42 @@ def process_video(video_path: Path, output_dir: Path, K=None, dist_coeffs=None) 
                     row["WRIST_speed_mm_s"] = wrist_speed_mm
                     cv2.putText(frame, f"WRIST: {wrist_speed_mm:.1f} mm/s",
                                 (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 0), 2)
+                for name, (x, y) in curr.items():
+                    row[f"{name}_x"] = x
+                    row[f"{name}_y"] = y
 
+                    if prev_landmarks and name in prev_landmarks:
+                        prev_x, prev_y = prev_landmarks[name]
+                        pixel_dist = np.sqrt((x - prev_x) ** 2 + (y - prev_y) ** 2)
+                        speed_px = pixel_dist * fps
+                        row[f"{name}_speed_px_s"] = speed_px
+
+                        if K is not None:
+                            speed_mm = px_to_mm(speed_px, K)
+                            row[f"{name}_speed_mm_s"] = speed_mm
+
+                            # Pospešek [mm/s²]
+                            if name in prev_speed:
+                                row[f"{name}_accel_mm_s2"] = (speed_mm - prev_speed[name]) * fps
+                            else:
+                                row[f"{name}_accel_mm_s2"] = np.nan
+                            prev_speed[name] = speed_mm
+                        else:
+                            if name in prev_speed:
+                                row[f"{name}_accel_px_s2"] = (speed_px - prev_speed[name]) * fps
+                            else:
+                                row[f"{name}_accel_px_s2"] = np.nan
+                            prev_speed[name] = speed_px
+
+                    else:
+                        row[f"{name}_speed_px_s"] = np.nan
+                        if K is not None:
+                            row[f"{name}_speed_mm_s"] = np.nan
+                            row[f"{name}_accel_mm_s2"] = np.nan
+                        else:
+                            row[f"{name}_accel_px_s2"] = np.nan
+                        prev_speed.pop(name, None)
+        
                 records.append(row)
                 prev_landmarks = curr
             else:
@@ -101,29 +143,90 @@ def process_video(video_path: Path, output_dir: Path, K=None, dist_coeffs=None) 
     cap.release()
     writer.release()
     print(f"  → Overlay video: {out_video_path}")
-    return pd.DataFrame(records)
 
+    # Akumulirana pot 
+    df = pd.DataFrame(records)
+
+    use_mm = K is not None
+    suffix = "_speed_mm_s" if use_mm else "_speed_px_s"
+    unit = "mm" if use_mm else "px"
+
+    for name in LANDMARK_NAMES:
+        speed_col = f"{name}{suffix}"
+        if speed_col in df.columns:
+            df[f"{name}_path_{unit}"] = df[speed_col].fillna(0).cumsum() / fps
+
+    return df 
+
+
+import plotly.graph_objects as go
 
 def save_speed_plot(df: pd.DataFrame, output_dir: Path, video_name: str):
-    # Izberi zanimive sklepe
-    joints = ["WRIST", "INDEX_FINGER_TIP", "THUMB_TIP", "MIDDLE_FINGER_TIP"]
+    use_mm = any("_speed_mm_s" in col for col in df.columns)
+    speed_suffix = "_speed_mm_s" if use_mm else "_speed_px_s"
+    accel_suffix = "_accel_mm_s2" if use_mm else "_accel_px_s2"
+    path_suffix = "_path_mm" if use_mm else "_path_px"
+    speed_unit = "mm/s"if use_mm else "px/s"
+    accel_unit = "mm/s²" if use_mm else "px/s²"
+    path_unit = "mm" if use_mm else "px"
 
-    fig, ax = plt.subplots(figsize=(14, 5))
+    joints = [col.replace(speed_suffix, "") for col in df.columns if col.endswith(speed_suffix)]
 
-    col = "WRIST_speed_mm_s" if "WRIST_speed_mm_s" in df.columns else "WRIST_speed_px_s"
-    unit = "mm/s" if "WRIST_speed_mm_s" in df.columns else "px/s"
+    from plotly.subplots import make_subplots
+    fig = make_subplots(
+        rows=3, cols=1,
+        subplot_titles=[
+            f"Hitrost [{speed_unit}]",
+            f"Pospešek [{accel_unit}]",
+            f"Akumulirana pot [{path_unit}]",
+        ],
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+    )
 
-    ax.plot(df["time_s"], df[col], linewidth=1.2, color="steelblue")
+    for joint in joints:
+        visible = True if joint == "WRIST" else "legendonly"
 
-    ax.set_xlabel("Čas [s]")
-    ax.set_ylabel(f"Hitrost [{unit}]")
-    ax.set_title(f"Hitrost zapestja — {video_name}")
-    ax.grid(True, alpha=0.3)
+        # Hitrost
+        if f"{joint}{speed_suffix}" in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df["time_s"], y=df[f"{joint}{speed_suffix}"],
+                name=joint, mode="lines", line=dict(width=1.5),
+                visible=visible, legendgroup=joint,
+            ), row=1, col=1)
 
-    plot_path = output_dir / (video_name + "_speed.png")
-    plt.savefig(str(plot_path), dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"  → Graf: {plot_path}")
+        # Pospešek
+        if f"{joint}{accel_suffix}" in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df["time_s"], y=df[f"{joint}{accel_suffix}"],
+                name=joint, mode="lines", line=dict(width=1.5),
+                visible=visible, legendgroup=joint, showlegend=False,
+            ), row=2, col=1)
+
+        # Pot
+        if f"{joint}{path_suffix}" in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df["time_s"], y=df[f"{joint}{path_suffix}"],
+                name=joint, mode="lines", line=dict(width=1.5),
+                visible=visible, legendgroup=joint, showlegend=False,
+            ), row=3, col=1)
+
+    fig.update_layout(
+        title=f"Kinematika sklepov — {video_name}",
+        xaxis3_title="Čas [s]",
+        legend=dict(
+            title="Sklepi",
+            itemclick="toggle",
+            itemdoubleclick="toggleothers",
+        ),
+        hovermode="x unified",
+        template="plotly_white",
+        height=900,
+    )
+
+    plot_path = output_dir / (video_name + "_kinematics.html")
+    fig.write_html(str(plot_path))
+    print(f"  → Interaktivni graf: {plot_path}")
 
 
 CALIBRATION_FILE = Path("/calibration/calibration.npz")
