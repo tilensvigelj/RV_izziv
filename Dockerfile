@@ -9,6 +9,7 @@ RUN pip install mediapipe==0.10.9
 RUN pip install pandas
 RUN pip install protobuf==3.20.3
 RUN pip install plotly
+RUN pip install scipy
 
 RUN apt-get update --fix-missing && apt-get install -y \
     libgl1 libglib2.0-0 \
