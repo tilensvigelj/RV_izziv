@@ -596,10 +596,7 @@ def collect_batch_features(df: pd.DataFrame, patient_id: str, output_dir: Path,
     
     # Zberi podatke za vsak frame
     frames_data = []
-    
-    speed_col = "WRIST_speed_mm_s" if "WRIST_speed_mm_s" in df.columns else None
-    accel_col = "WRIST_accel_mm_s2" if "WRIST_accel_mm_s2" in df.columns else None
-    path_col = "WRIST_path_mm" if "WRIST_path_mm" in df.columns else None
+    joints = ['WRIST', 'THUMB_TIP', 'INDEX_FINGER_TIP'] 
     
     for idx, row in df.iterrows():
         frame_record = {
@@ -607,20 +604,16 @@ def collect_batch_features(df: pd.DataFrame, patient_id: str, output_dir: Path,
             'frame': row.get('frame', idx),
             'time_s': row.get('time_s', np.nan),
         }
-        
-        if speed_col and speed_col in row:
-            frame_record['wrist_speed_mm_s'] = row[speed_col]
-        
-        if accel_col and accel_col in row:
-            frame_record['wrist_accel_mm_s2'] = row[accel_col]
-        
-        if path_col and path_col in row:
-            frame_record['wrist_path_mm'] = row[path_col]
-        
-        if 'WRIST_x' in row and 'WRIST_y' in row:
-            frame_record['wrist_x'] = row['WRIST_x']
-            frame_record['wrist_y'] = row['WRIST_y']
-        
+        for joint in joints:
+            speed_col = f"{joint}_speed_mm_s"
+            accel_col = f"{joint}_accel_mm_s2"
+            path_col = f"{joint}_path_mm"
+            if speed_col in row:
+                frame_record[f"{joint.lower()}_speed_mm_s"] = row[speed_col]
+            if accel_col in row:
+                frame_record[f"{joint.lower()}_accel_mm_s2"] = row[accel_col]
+            if path_col in row:
+                frame_record[f"{joint.lower()}_path_mm"] = row[path_col]
         frames_data.append(frame_record)
     
     # Dodaj metrike v features
