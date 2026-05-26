@@ -1075,7 +1075,7 @@ Primeri:
     mode.add_argument("--batch", action="store_true", help="Paketna analiza.")
 
     parser.add_argument("--max-patients", type=int, default=336, metavar="N",
-                        help="Maks. stevilo pacientov v paketnem nacinu (privzeto: 336).")
+                        help="Maks. stevilo pacientov v paketnem nacinu (privzeto: 100).")
     parser.add_argument("--cam", default="mid", help="Ime kamere v kalibracijskem .npz (privzeto: mid).")
     parser.add_argument("--no-calib", action="store_true", help="Preskoci kalibracijo.")
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR,
